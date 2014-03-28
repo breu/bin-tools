@@ -1,7 +1,7 @@
 #!/opt/local/bin/bash
 
 usage() {
-cat << EOF
+  cat << EOF
 usage: $0 <options>
 
 This script will launch a number of machines and do things with them
@@ -26,7 +26,17 @@ EOF
     echo "  $i"
   done
   echo ""
-  
+
+  cat << EOF
+Examples:
+========
+  Build a 4 node cluster on ubuntu with ubuntu-havana-ha-neutron
+    build-nodes -n 4 -e ubuntu-havana-ha-neutron 
+
+  Build a 5 node cluster on centos with centos-havana-ha-neutron
+    build-nodes -n 5 -e centos-havana-ha-neutron -d centos
+EOF
+
   exit 1
 }
 
