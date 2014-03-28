@@ -1,0 +1,9 @@
+#!/bin/bash
+
+if [ -z $1 ]; then
+  echo "you must supply a line number"
+  exit;
+fi
+
+echo "deleting line $1 from .ssh/known_hosts"
+sed -i bak ''${1}'d' .ssh/known_hosts

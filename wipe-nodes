@@ -1,0 +1,39 @@
+#!/bin/bash
+
+if [[ -z ${1} ]]; then
+  echo "You must supply a name of the nodes to delete!"
+  exit 1
+fi
+
+EXTRA=""
+if [[ ! -z ${2} ]]; then
+  EXTRA="| grep ${2}"
+fi
+
+echo "Gathering the list of candidate instances"
+echo "-----------------------------------------"
+nova list --name ^${1} ${EXTRA} | grep "ACTIVE\|BUILD\|ERROR" | awk '{print $4}'
+echo ""
+echo "------------------------------------------------"
+echo "Hit CTRL-C to cancel.  Any other key to continue"
+read JUNK
+
+
+INSTANCE_ID_LIST=()
+
+echo "terminating instances"
+for i in $(nova list --name ^${1} ${EXTRA} | grep "ACTIVE\|BUILD\|ERROR" | awk '{print $4}'); do
+  echo "deleting $i"
+  nova delete $i
+  knife node delete "$i" -y
+  knife client delete "$i" -y
+done
+
+echo "waiting for instances to terminate"
+sleep 5s
+while [[ $(nova list --name ^${1} ${EXTRA} | grep -c ACTIVE) -gt 0 ]]; do
+  nova list --name ^${1} --fields name,status,task_state,power_state
+  sleep 5s
+done
+
+echo "all instances have been destroyed"

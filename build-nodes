@@ -1,0 +1,212 @@
+#!/opt/local/bin/bash
+
+usage() {
+cat << EOF
+usage: $0 <options>
+
+This script will launch a number of machines and do things with them
+
+OPTIONS:
+=======
+  -h | --help                Show this message
+  -b | --bootstrap           Should we bootstrap the server?  Set to 0 to
+                             disable bootstrapping the servers.  Default = 1)
+  -u | --upload_environment  Upload the chef environment from disk overwriting
+                             the existing one.
+  -n | --node_count          Number of machines to launch (Default = 3)
+  -p | --prefix              Prefix to use (Default is "breu")
+  -e | --environment         Environment to launch with
+  -d | --distro              Distribution to launch (Default is ubuntu)
+                             Currently supports: [ ubuntu | centos | rhel ]
+
+Available Environments:
+======================
+EOF
+  for i in $(ls -1 ${HOME}/Work/ChefEnvs | sed 's/\.json//g' | sort); do
+    echo "  $i"
+  done
+  echo ""
+  
+  exit 1
+}
+
+DISTRO=ubuntu
+ENVIRONMENT=
+BOOTSTRAP=1
+NODE_COUNT=3
+UPLOAD_ENVIRONMENT=0
+PREFIX="breu"
+
+eval set -- $(/opt/local/bin/getopt -n "$0" -o "hub:n:p:e:d:" -l "help,upload_environment,bootstrap:,node_count:,prefix:,environment:,distro:" -- "$@")
+if [ $? -ne 0 ]; then
+  echo "something went wrong with getopt"
+  exit 1
+fi
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage ; shift ;;
+    -u|--upload_environment) UPLOAD_ENVIRONMENT=1 ; shift ;;
+    -b|--bootstrap) 
+      case "$2" in
+        *) BOOTSTRAP=0 ;;
+      esac
+      shift 2
+      ;;
+    -n|--node_count)
+      case "$2" in
+        *) NODE_COUNT=$2 ;;
+      esac
+      shift 2
+      ;;
+    -p|--prefix)
+      case "$2" in
+        *) PREFIX="$2" ;;
+      esac
+      shift 2
+      ;;
+    -e|--environment)
+      case "$2" in
+        *) ENVIRONMENT="$2" ;;
+      esac
+      shift 2
+      ;;
+    -d|--distro)
+      case "$2" in
+        *) DISTRO="$2" ;;
+      esac
+      shift 2
+      ;;
+    --) shift ; break ;;
+    *) echo "Argument Parsing Error - $1 unknown" ; exit 1 ;;
+  esac
+done
+
+if [[ -z ${ENVIRONMENT} ]]; then
+  usage
+fi
+
+if [[ ${UPLOAD_ENVIRONMENT} == 1 ]]; then
+  echo "Uploading environment ${ENVIRONMENT} to the chef server..."
+  knife environment from file ${HOME}/Work/ChefEnvs/${ENVIRONMENT}.json
+fi
+
+for i in $(seq 1 ${NODE_COUNT}); do
+  machines+=(n${i})
+done
+
+echo "Building ${NODE_COUNT} nodes on ${DISTRO} in environment ${ENVIRONMENT}"
+
+echo -n "Checking that the environment specified exists: "
+knife environment show ${ENVIRONMENT} >/dev/null
+RES=$?
+if [[ ! ${RES} == 0 ]]; then
+  echo "Environment ${ENVIRONMENT} doesn't exist!"
+  echo "Uploading environment ${ENVIRONMENT} to the chef server..."
+  knife environment from file ${HOME}/Work/ChefEnvs/${ENVIRONMENT}.json
+  if [[ $? != 0 ]]; then
+    echo "Environment does not exist and I cannot upload one"
+    exit 1
+  fi
+else
+  echo "OK"
+fi
+
+case $DISTRO in
+  ubuntu)
+    IMAGE="0fb5a76c-8488-42b5-94f3-65e57b725813" # Ubuntu PVHVM
+    ;;
+  centos)
+    IMAGE="85019bd8-fb5d-4230-b3bc-63b192800f28" # CentOS PVHVM
+    ;;
+  redhat)
+    IMAGE="65bef64f-02e8-4fd7-8433-d538073c7571" # RedHat PVHVM
+    ;;
+  *)
+    echo "invalid image name DISTRO=$DISTRO"
+    exit 1
+    ;;
+esac
+
+case $OS_REGION_NAME in
+  DFW)
+    NICS="--nic net-id=00000000-0000-0000-0000-000000000000 \
+          --nic net-id=ec2be834-6bc6-4d0c-9d53-cd0b67ddbf26 \
+          --nic net-id=006ccc50-be41-42bd-864c-b9204ff6dbde \
+          --nic net-id=7fb5b703-dbc8-4744-b01c-487e2f75a91a"
+    ;;
+  *)
+    echo "unknown DC at the moment - please configure the script!"
+    exit 1
+    ;;
+esac
+
+FILES="--file /etc/cron.d/firstboot=/Users/joseph.breu/bin/injection/crond \
+       --file /root/install.sh=/Users/joseph.breu/bin/injection/install-nochefclient.sh"
+
+OPTIONS="--disk-config=MANUAL\
+         --key-name=breu"
+
+INSTANCE_ID_LIST=()
+BOOTSTRAP_INSTANCE_ID_LIST=()
+
+echo -n "booting nodes..."
+for i in ${machines[@]}; do
+  INSTANCE_ID_LIST+=($(nova boot --image=${IMAGE} --flavor=performance1-4 $OPTIONS $NICS $FILES ${PREFIX}-${ENVIRONMENT}-${i} | awk '{if($2=="id") print $4}'))
+done
+echo "done"
+echo "----------------------------"
+
+INSTANCE_COUNT=${#INSTANCE_ID_LIST[@]}
+INSTANCES_DONE=0
+echo -n "waiting for instances to boot..."
+while [[ ${INSTANCES_DONE} != 1 ]]; do
+  echo -n "${#INSTANCE_ID_LIST[@]}."
+  for instance_test in ${INSTANCE_ID_LIST[@]}; do
+    STATUS=$(nova show ${instance_test} | awk '{if($2=="status") print $4}')
+    if [[ ${STATUS} == "ACTIVE" ]]; then
+      for (( c=0; c<=${INSTANCE_COUNT}; c++)) do
+        if [[ ${INSTANCE_ID_LIST[$c]} == ${instance_test} ]]; then
+          BOOTSTRAP_INSTANCE_ID_LIST+=(${instance_test})
+          unset INSTANCE_ID_LIST[${c}]
+        fi
+      done
+    fi
+  done
+  if [[ ${#INSTANCE_ID_LIST[@]} == 0 ]]; then
+    INSTANCES_DONE=1
+  else
+    sleep 5s
+  fi
+done
+echo "all instances have been launched"
+
+echo "Waiting for SSH"
+echo "---------------"
+COUNT=0
+for instance_bootstrap in ${BOOTSTRAP_INSTANCE_ID_LIST[@]}; do
+    BOOTSTRAP_IP=$(nova show ${instance_bootstrap} | awk '{if($2=="accessIPv4") print $4}')
+    echo -n "Waiting for ${BOOTSTRAP_IP}..."
+    while ! nc -w 0 ${BOOTSTRAP_IP} 22 < /dev/null > /dev/null; do
+      echo -n "."
+      (( COUNT++ ))
+      sleep 5s
+      if [[ ${COUNT} -ge 100 ]]; then
+        echo "ERROR!  ${BOOTSTRAP_IP} did not come online fast enough"
+        exit 1
+        break
+      fi
+    done
+done
+
+if [[ ${BOOTSTRAP} == 0 ]]; then
+  echo "Skipping bootstrapping of the servers"
+else
+  echo "registering the nodes with chef"
+  echo "----------------------------"
+
+  for instance_bootstrap in ${BOOTSTRAP_INSTANCE_ID_LIST[@]}; do
+    BOOTSTRAP_IP=$(nova show ${instance_bootstrap} | awk '{if($2=="accessIPv4") print $4}')
+    knife bootstrap -E ${ENVIRONMENT} --no-host-key-verify ${BOOTSTRAP_IP}
+  done
+fi

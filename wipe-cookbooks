@@ -1,0 +1,4 @@
+#!/bin/bash
+
+knife cookbook bulk_delete . -y
+knife role bulk_delete . -y
