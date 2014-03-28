@@ -1,0 +1,10 @@
+#!/bin/bash
+
+NODES=
+if [[ -z ${1} ]]; then
+  NODES="breu"
+else
+  NODES="$1"
+fi
+
+nova list --name ${NODES}
