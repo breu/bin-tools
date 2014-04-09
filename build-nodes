@@ -35,12 +35,18 @@ Examples:
 
   Build a 5 node cluster on centos with centos-havana-ha-neutron
     build-nodes -n 5 -e centos-havana-ha-neutron -d centos
+
+  Build a 3 node cluster on ubuntu with ubuntu-havana-ha-neutron with the
+  distribution type derived from the environment file:
+    build-nodes -e ubuntu-havana-ha-neutron -n 3
+
 EOF
 
   exit 1
 }
 
 DISTRO=ubuntu
+DISTRO_SUPPLIED=0
 ENVIRONMENT=
 BOOTSTRAP=1
 NODE_COUNT=3
@@ -49,7 +55,7 @@ PREFIX="breu"
 
 eval set -- $(/opt/local/bin/getopt -n "$0" -o "hub:n:p:e:d:" -l "help,upload_environment,bootstrap:,node_count:,prefix:,environment:,distro:" -- "$@")
 if [ $? -ne 0 ]; then
-  echo "something went wrong with getopt"
+  echo "!) Something went wrong with getopt and I cannot continue.  Good Bye."
   exit 1
 fi
 
@@ -83,59 +89,63 @@ while [ $# -gt 0 ]; do
       ;;
     -d|--distro)
       case "$2" in
-        *) DISTRO="$2" ;;
+        *) DISTRO="$2"; DISTRO_SUPPLIED=1 ;;
       esac
       shift 2
       ;;
     --) shift ; break ;;
-    *) echo "Argument Parsing Error - $1 unknown" ; exit 1 ;;
+  *) echo "!) Argument Parsing Error - $1 unknown" ; exit 1 ;;
   esac
 done
-
-if [[ -z ${ENVIRONMENT} ]]; then
-  usage
-fi
-
-if [[ ${UPLOAD_ENVIRONMENT} == 1 ]]; then
-  echo "Uploading environment ${ENVIRONMENT} to the chef server..."
-  knife environment from file ${HOME}/Work/ChefEnvs/${ENVIRONMENT}.json
-fi
 
 for i in $(seq 1 ${NODE_COUNT}); do
   machines+=(n${i})
 done
 
-echo "Building ${NODE_COUNT} nodes on ${DISTRO} in environment ${ENVIRONMENT}"
+if [[ ${BOOTSTRAP} == 1 ]]; then
+  echo "*) Building ${NODE_COUNT} nodes on ${DISTRO} in environment ${ENVIRONMENT}"
+  if [[ -z ${ENVIRONMENT} ]]; then
+    usage
+  fi
 
-echo -n "Checking that the environment specified exists: "
-knife environment show ${ENVIRONMENT} >/dev/null
-RES=$?
-if [[ ! ${RES} == 0 ]]; then
-  echo "Environment ${ENVIRONMENT} doesn't exist!"
-  echo "Uploading environment ${ENVIRONMENT} to the chef server..."
-  knife environment from file ${HOME}/Work/ChefEnvs/${ENVIRONMENT}.json
-  if [[ $? != 0 ]]; then
-    echo "Environment does not exist and I cannot upload one"
-    exit 1
+  if [[ ${UPLOAD_ENVIRONMENT} == 1 ]]; then
+    echo "*) Uploading environment ${ENVIRONMENT} to the chef server..."
+    knife environment from file ${HOME}/Work/ChefEnvs/${ENVIRONMENT}.json
+  fi
+
+  echo "*) Checking that environment ${ENVIRONMENT} exists: "
+  knife environment show ${ENVIRONMENT} >/dev/null
+  RES=$?
+  if [[ ! ${RES} == 0 ]]; then
+    echo "*) Environment ${ENVIRONMENT} doesn't exist!"
+    echo "*) Uploading environment ${ENVIRONMENT} to the chef server..."
+    knife environment from file ${HOME}/Work/ChefEnvs/${ENVIRONMENT}.json
+    if [[ $? != 0 ]]; then
+      echo "!) Environment does not exist and I cannot upload one.  I cannot continue."
+      exit 1
+    fi
+  else
+    echo "*) Uploaded environment ${ENVIRONMENT}"
+  fi
+
+  if [[ ${DISTRO_SUPPLIED} == 0 ]]; then
+    echo "-) No distribution was specified.  Trying to guess it from the environment."
+    MAYBE_DISTRO=$(echo ${ENVIRONMENT} | cut -d "-" -f 1)
+    echo "*) Setting distribution to ${MAYBE_DISTRO}"
+    DISTRO=${MAYBE_DISTRO}
   fi
 else
-  echo "OK"
+  ENVIRONMENT="bare"
+  echo "*) Building ${NODE_COUNT} nodes on ${DISTRO}"
 fi
 
 case $DISTRO in
-  ubuntu)
-    IMAGE="0fb5a76c-8488-42b5-94f3-65e57b725813" # Ubuntu PVHVM
-    ;;
-  centos)
-    IMAGE="85019bd8-fb5d-4230-b3bc-63b192800f28" # CentOS PVHVM
-    ;;
-  redhat)
-    IMAGE="65bef64f-02e8-4fd7-8433-d538073c7571" # RedHat PVHVM
-    ;;
-  *)
-    echo "invalid image name DISTRO=$DISTRO"
-    exit 1
-    ;;
+  ubuntu)        IMAGE="0fb5a76c-8488-42b5-94f3-65e57b725813" ;; # Ubuntu PVHVM
+  ubuntu-saucy)  IMAGE="6110edfe-8589-4bb1-aa27-385f12242627" ;; # Ubuntu 13.10 PVHVM
+  ubuntu-trusty) IMAGE="f648f153-270e-41a9-a679-834a77c9659d" ;; # Ubuntu 14.04 PVHVM - NOT A PUBLIC IMAGE
+  centos)        IMAGE="85019bd8-fb5d-4230-b3bc-63b192800f28" ;; # CentOS PVHVM
+  redhat)        IMAGE="65bef64f-02e8-4fd7-8433-d538073c7571" ;; # RedHat PVHVM
+  *)             echo "!) invalid image name DISTRO=$DISTRO"; exit 1 ;;
 esac
 
 case $OS_REGION_NAME in
@@ -146,7 +156,7 @@ case $OS_REGION_NAME in
           --nic net-id=7fb5b703-dbc8-4744-b01c-487e2f75a91a"
     ;;
   *)
-    echo "unknown DC at the moment - please configure the script!"
+    echo "!) unknown DC at the moment - please configure the script!"
     exit 1
     ;;
 esac
@@ -160,16 +170,15 @@ OPTIONS="--disk-config=MANUAL\
 INSTANCE_ID_LIST=()
 BOOTSTRAP_INSTANCE_ID_LIST=()
 
-echo -n "booting nodes..."
+echo -n "*) booting nodes..."
 for i in ${machines[@]}; do
   INSTANCE_ID_LIST+=($(nova boot --image=${IMAGE} --flavor=performance1-4 $OPTIONS $NICS $FILES ${PREFIX}-${ENVIRONMENT}-${i} | awk '{if($2=="id") print $4}'))
 done
 echo "done"
-echo "----------------------------"
 
 INSTANCE_COUNT=${#INSTANCE_ID_LIST[@]}
 INSTANCES_DONE=0
-echo -n "waiting for instances to boot..."
+echo -n "*) waiting for instances to boot..."
 while [[ ${INSTANCES_DONE} != 1 ]]; do
   echo -n "${#INSTANCE_ID_LIST[@]}."
   for instance_test in ${INSTANCE_ID_LIST[@]}; do
@@ -189,14 +198,14 @@ while [[ ${INSTANCES_DONE} != 1 ]]; do
     sleep 5s
   fi
 done
-echo "all instances have been launched"
+echo ""
+echo "*) All instances have been launched"
 
-echo "Waiting for SSH"
-echo "---------------"
+echo "*) Waiting for SSH"
 COUNT=0
 for instance_bootstrap in ${BOOTSTRAP_INSTANCE_ID_LIST[@]}; do
     BOOTSTRAP_IP=$(nova show ${instance_bootstrap} | awk '{if($2=="accessIPv4") print $4}')
-    echo -n "Waiting for ${BOOTSTRAP_IP}..."
+    echo -n "*) Waiting for ${BOOTSTRAP_IP}..."
     while ! nc -w 0 ${BOOTSTRAP_IP} 22 < /dev/null > /dev/null; do
       echo -n "."
       (( COUNT++ ))
@@ -207,16 +216,19 @@ for instance_bootstrap in ${BOOTSTRAP_INSTANCE_ID_LIST[@]}; do
         break
       fi
     done
+    echo "done."
 done
 
 if [[ ${BOOTSTRAP} == 0 ]]; then
-  echo "Skipping bootstrapping of the servers"
+  echo "*) Skipping bootstrapping of the servers"
 else
-  echo "registering the nodes with chef"
-  echo "----------------------------"
+  echo "*) registering the nodes with chef"
 
   for instance_bootstrap in ${BOOTSTRAP_INSTANCE_ID_LIST[@]}; do
     BOOTSTRAP_IP=$(nova show ${instance_bootstrap} | awk '{if($2=="accessIPv4") print $4}')
     knife bootstrap -E ${ENVIRONMENT} --no-host-key-verify ${BOOTSTRAP_IP}
   done
 fi
+
+echo ""
+echo "*) Everything is done"
