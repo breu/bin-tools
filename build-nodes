@@ -103,10 +103,10 @@ for i in $(seq 1 ${NODE_COUNT}); do
 done
 
 if [[ ${BOOTSTRAP} == 1 ]]; then
-  echo "*) Building ${NODE_COUNT} nodes on ${DISTRO} in environment ${ENVIRONMENT}"
   if [[ -z ${ENVIRONMENT} ]]; then
     usage
   fi
+  echo "*) Building a ${NODE_COUNT} node cluster in environment ${ENVIRONMENT}"
 
   if [[ ${UPLOAD_ENVIRONMENT} == 1 ]]; then
     echo "*) Uploading environment ${ENVIRONMENT} to the chef server..."
