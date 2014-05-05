@@ -42,7 +42,7 @@ screen -r ${SCREEN_SESSION} -X setenv PROMPT_COMMAND /bin/true
 for i in $(nova list --name ${1} --fields name | awk '{print $4}' | grep "${1}"); do
   screen -S ${SCREEN_SESSION} -X screen -t $i
 #  screen -S ${SCREEN_SESSION} -p $i -X stuff "bash -c \". ${ENVFILE}; nova ssh ${USERENT} ${SSH_PUBKEY} --extra-opts '-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -o TCPKeepAlive=yes' ${i}\"$NL"
-  screen -S ${SCREEN_SESSION} -p $i -X stuff "bash -c \"nova ssh ${USERENT} ${SSH_PUBKEY} --extra-opts '-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -o TCPKeepAlive=yes' ${i}\"$NL"
+  screen -S ${SCREEN_SESSION} -p $i -X stuff "bash -c \"OS_REGION_NAME=${OS_REGION_NAME} nova ssh ${USERENT} ${SSH_PUBKEY} --extra-opts '-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -o TCPKeepAlive=yes' ${i}\"$NL"
 done
 screen -S ${SCREEN_SESSION} -p shell -X stuff "exit$NL"
 
