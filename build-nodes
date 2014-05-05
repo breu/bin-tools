@@ -14,6 +14,8 @@ OPTIONS:
   -u | --upload_environment  Upload the chef environment from disk overwriting
                              the existing one.
   -n | --node_count          Number of machines to launch (Default = 3)
+  -i                         Use the environment name in the instance name
+                             (Default = 1)
   -p | --prefix              Prefix to use (Default is "breu")
   -e | --environment         Environment to launch with
   -d | --distro              Distribution to launch (Default is ubuntu)
@@ -51,9 +53,10 @@ ENVIRONMENT=
 BOOTSTRAP=1
 NODE_COUNT=3
 UPLOAD_ENVIRONMENT=0
+USE_ENVIRONMENT_NAME_FOR_INSTANCES=1
 PREFIX="breu"
 
-eval set -- $(/opt/local/bin/getopt -n "$0" -o "hub:n:p:e:d:" -l "help,upload_environment,bootstrap:,node_count:,prefix:,environment:,distro:" -- "$@")
+eval set -- $(/opt/local/bin/getopt -n "$0" -o "hub:n:p:e:d::i" -l "help,upload_environment,bootstrap:,node_count:,prefix:,environment:,distro:" -- "$@")
 if [ $? -ne 0 ]; then
   echo "!) Something went wrong with getopt and I cannot continue.  Good Bye."
   exit 1
@@ -63,6 +66,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -h|--help) usage ; shift ;;
     -u|--upload_environment) UPLOAD_ENVIRONMENT=1 ; shift ;;
+    -i) USE_ENVIRONMENT_NAME_FOR_INSTANCES=0 ; shift ;;
     -b|--bootstrap) 
       case "$2" in
         *) BOOTSTRAP=0 ;;
@@ -155,6 +159,16 @@ case $OS_REGION_NAME in
           --nic net-id=006ccc50-be41-42bd-864c-b9204ff6dbde \
           --nic net-id=7fb5b703-dbc8-4744-b01c-487e2f75a91a"
     ;;
+  ORD)
+    NICS="--nic net-id=00000000-0000-0000-0000-000000000000 \
+          --nic net-id=69f4e96a-9fae-46f6-933a-982d0980ddfe \
+          --nic net-id=4a62407c-93c8-42b8-aa5c-89a0371001da \
+          --nic net-id=8eebfac1-2ec4-4162-a4f0-417d589a6eaf"
+    ;;
+  IAD|SYD|HKG)
+    echo "need to finish this part - create a section for ${OS_REGION_NAME}"
+    exit 1
+    ;;
   *)
     echo "!) unknown DC at the moment - please configure the script!"
     exit 1
@@ -172,7 +186,11 @@ BOOTSTRAP_INSTANCE_ID_LIST=()
 
 echo -n "*) booting nodes..."
 for i in ${machines[@]}; do
-  INSTANCE_ID_LIST+=($(nova boot --image=${IMAGE} --flavor=performance1-4 $OPTIONS $NICS $FILES ${PREFIX}-${ENVIRONMENT}-${i} | awk '{if($2=="id") print $4}'))
+  INSTANCE_NAME="${PREFIX}-${i}"
+  if [[ ${USE_ENVIRONMENT_NAME_FOR_INSTANCES} == 1 ]]; then
+    INSTANCE_NAME="${PREFIX}-${ENVIRONMENT}-${i}"
+  fi
+  INSTANCE_ID_LIST+=($(nova boot --image=${IMAGE} --flavor=performance1-4 $OPTIONS $NICS $FILES ${INSTANCE_NAME} | awk '{if($2=="id") print $4}'))
 done
 echo "done"
 
